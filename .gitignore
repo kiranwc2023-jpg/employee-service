@@ -1,0 +1,113 @@
+# ═══════════════════════════════════════════════════════════════════════
+# .gitignore — Tells Git which files to NEVER track
+#
+# WHY THIS FILE EXISTS:
+#   Without .gitignore, `git add .` would commit build artifacts, IDE files,
+#   secrets, and OS files. This creates:
+#     - Repository bloat (hundreds of MB of compiled classes)
+#     - Security leaks (credentials accidentally committed)
+#     - Merge conflicts (IDE settings differ per developer)
+#     - Broken CI (compiled code from wrong Java version checked in)
+#
+# RULE: Commit SOURCE files. Never commit GENERATED files.
+# ═══════════════════════════════════════════════════════════════════════
+
+# ───────────────────────────────────────────────────────────────────────
+# MAVEN BUILD OUTPUT
+# Maven compiles Java → .class files in /target.
+# The fat JAR is also in /target.
+# These are GENERATED — rebuild from source anytime.
+# Committing them causes: binary file conflicts, bloated diffs, wrong-version JARs.
+# ───────────────────────────────────────────────────────────────────────
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# ───────────────────────────────────────────────────────────────────────
+# MAVEN WRAPPER
+# maven-wrapper.properties tells Maven which version to use.
+# The JAR is small and should be committed so the project is self-contained.
+# (Exception to the .jar rule above — see the !.mvn/wrapper/ line)
+# ───────────────────────────────────────────────────────────────────────
+.mvn/
+
+# ───────────────────────────────────────────────────────────────────────
+# IntelliJ IDEA IDE FILES
+# .idea/ = project settings, run configurations, code style preferences
+# *.iml = module definition files
+# These are IDE-specific. VSCode users don't need .idea. Vim users don't need it.
+# Committing IDE files causes constant merge conflicts between team members.
+# ───────────────────────────────────────────────────────────────────────
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+
+# ───────────────────────────────────────────────────────────────────────
+# ECLIPSE IDE FILES
+# ───────────────────────────────────────────────────────────────────────
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+# ───────────────────────────────────────────────────────────────────────
+# VISUAL STUDIO CODE
+# .vscode/settings.json stores workspace settings — may differ per developer.
+# Exception: .vscode/extensions.json (recommended extensions) IS worth committing.
+# ───────────────────────────────────────────────────────────────────────
+.vscode/
+
+# ───────────────────────────────────────────────────────────────────────
+# OPERATING SYSTEM FILES
+# macOS creates .DS_Store in every directory for Finder metadata.
+# Windows creates Thumbs.db for image thumbnails.
+# These are NEVER relevant to the project.
+# ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# ───────────────────────────────────────────────────────────────────────
+# ENVIRONMENT AND SECRETS — MOST CRITICAL SECTION
+# .env files often contain:
+#   DATABASE_URL=postgres://user:password@host:5432/db
+#   AWS_ACCESS_KEY_ID=AKIA...
+#   JWT_SECRET=supersecret
+# NEVER commit these. If you do, rotate ALL credentials immediately.
+# Secret scanning tools (GitHub, GitGuardian) alert on these patterns.
+# ───────────────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.env
+application-local.properties
+application-secret.properties
+secrets.properties
+
+# ───────────────────────────────────────────────────────────────────────
+# LOG FILES
+# Log files grow indefinitely and contain sensitive runtime data.
+# They are generated at runtime — never commit them.
+# ───────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ───────────────────────────────────────────────────────────────────────
+# DOCKER
+# .dockerignore handles this at the Docker layer.
+# These are local Docker desktop files.
+# ───────────────────────────────────────────────────────────────────────
+docker-compose.override.yml
+
+# ───────────────────────────────────────────────────────────────────────
+# SPRING BOOT DEVTOOLS
+# DevTools restart files — used for hot-reload in development only.
+# ───────────────────────────────────────────────────────────────────────
+spring-devtools.properties

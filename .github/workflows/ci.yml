@@ -1,0 +1,666 @@
+# ═══════════════════════════════════════════════════════════════════════
+# ci.yml — GitHub Actions CI/CD Pipeline
+#
+# WHY THIS FILE EXISTS:
+#   GitHub Actions reads every .yml file inside .github/workflows/ and
+#   registers them as automated workflows. This file defines the ENTIRE
+#   pipeline: build, test, version, dockerize, publish, update GitOps.
+#
+# HOW GITHUB ACTIONS WORKS:
+#   GitHub maintains a fleet of virtual machines called "runners."
+#   When a trigger fires (push, PR merge), GitHub:
+#     1. Picks an available runner from its pool
+#     2. Clones your repository onto that runner
+#     3. Executes each step in order
+#     4. Reports success/failure back to the GitHub UI
+#
+#   Runners are ephemeral — they are created fresh for each run and
+#   destroyed afterward. Nothing persists between runs UNLESS you use
+#   actions/cache or upload artifacts.
+# ═══════════════════════════════════════════════════════════════════════
+
+# name: The display name shown in the GitHub Actions tab.
+# Without this: GitHub uses the filename ("ci.yml") — less readable.
+name: Employee Service CI/CD Pipeline
+
+# ───────────────────────────────────────────────────────────────────────
+# ON: TRIGGER CONDITIONS
+# Defines WHEN this workflow executes.
+# Without the 'on' section: the workflow never runs.
+# ───────────────────────────────────────────────────────────────────────
+on:
+  # push: triggers when code is PUSHED to these branches
+  push:
+    branches:
+      # main branch = production deployments
+      # Any push to main (including merged PRs) triggers the full pipeline.
+      - main
+      # develop branch = staging deployments
+      # Feature branches merged to develop trigger CI for staging environment.
+      - develop
+    # paths-ignore: do NOT trigger if ONLY these files changed.
+    # A developer fixing a typo in README.md should not trigger a full
+    # Docker build and Kubernetes deployment — waste of CI minutes.
+    paths-ignore:
+      - '**.md'           # any Markdown file
+      - '.gitignore'      # gitignore changes don't affect the build
+      - 'docs/**'         # documentation changes
+
+  # pull_request: triggers when a PR is OPENED, SYNCHRONIZED (new commit pushed to PR branch),
+  # or REOPENED targeting these branches.
+  # This is the "CI gate" — PRs cannot be merged without passing CI.
+  pull_request:
+    branches:
+      - main
+      - develop
+    # For PRs, we run build+test but NOT deploy (no version bump, no Docker push).
+    # Deployment happens after the PR is MERGED (caught by the 'push' trigger above).
+
+  # workflow_dispatch: adds a "Run workflow" button in the GitHub UI.
+  # Allows manual triggering — useful for emergency redeployments
+  # without needing to push a commit.
+  workflow_dispatch:
+    inputs:
+      # Input parameters for manual runs
+      force_deploy:
+        description: 'Force deployment even if tests fail'
+        required: false
+        default: 'false'
+        type: boolean
+
+# ───────────────────────────────────────────────────────────────────────
+# ENV: GLOBAL ENVIRONMENT VARIABLES
+# Available to ALL jobs and steps in this workflow.
+# Centralize configuration here — change once, applies everywhere.
+# ───────────────────────────────────────────────────────────────────────
+env:
+  # JAVA_VERSION: controls which Java version the runner installs.
+  # Must match the java.version property in pom.xml.
+  JAVA_VERSION: '21'
+
+  # REGISTRY: GitHub Container Registry URL.
+  # ghcr.io is GitHub's built-in Docker registry — no separate account needed.
+  # Alternative registries: docker.io (Docker Hub), quay.io (Red Hat), ECR (AWS).
+  REGISTRY: ghcr.io
+
+  # IMAGE_NAME: the full Docker image path.
+  # ${{ github.repository }} = "owner/repo-name" (e.g., "mycompany/employee-service")
+  # github.repository is a built-in context variable — always correct regardless of fork.
+  # Full image path: ghcr.io/mycompany/employee-service
+  IMAGE_NAME: ${{ github.repository }}
+
+  # GITOPS_REPO: the separate repository holding Kubernetes deployment manifests.
+  # This is the "GitOps repository" — the source of truth for what runs in K8s.
+  GITOPS_REPO: 'mycompany/employee-gitops'
+
+# ───────────────────────────────────────────────────────────────────────
+# PERMISSIONS: What the GitHub Actions token can do.
+# GitHub Actions has a built-in GITHUB_TOKEN (automatic, no setup needed).
+# By default, permissions are read-only. You must explicitly grant write access.
+# Principle of least privilege: grant ONLY what is needed.
+# ───────────────────────────────────────────────────────────────────────
+permissions:
+  # contents: write → allows git push (for version tags and GitHub Releases)
+  contents: write
+  # packages: write → allows pushing Docker images to GHCR
+  packages: write
+  # pull-requests: write → allows the workflow to comment on PRs
+  pull-requests: write
+  # security-events: write → allows uploading security scan results
+  security-events: write
+
+# ───────────────────────────────────────────────────────────────────────
+# JOBS: The units of work in this workflow.
+# Jobs run in PARALLEL by default.
+# Use 'needs' to make a job wait for another job to succeed first.
+# ───────────────────────────────────────────────────────────────────────
+jobs:
+
+  # ┌─────────────────────────────────────────────────────────────────┐
+  # │ JOB 1: test                                                     │
+  # │ Runs: Maven build + unit tests                                  │
+  # │ Always runs (both push and PR events)                           │
+  # └─────────────────────────────────────────────────────────────────┘
+  test:
+    # name: display name in the GitHub Actions UI
+    name: Build and Test
+
+    # runs-on: specifies the type of runner to use.
+    # ubuntu-latest: the latest Ubuntu LTS version provided by GitHub.
+    # GitHub provides: ubuntu-latest, windows-latest, macos-latest.
+    # ubuntu-latest is the most common for Java/Docker builds.
+    # Cost: GitHub-hosted runners are free for public repos; paid for private.
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ─────────────────────────────────────────────────────────────
+      # STEP: Checkout the repository
+      # 'uses' references a pre-built Action from the GitHub Marketplace.
+      # actions/checkout@v4 clones your repository onto the runner.
+      # Without this step, the runner has an empty workspace — no code.
+      # @v4 = version 4 of the checkout action (pinned version is a security best practice).
+      # Using @v4 instead of @main prevents supply chain attacks where
+      # the action author pushes malicious code to @main.
+      # ─────────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 fetches the ENTIRE git history (all commits, all tags).
+          # Default is fetch-depth: 1 (shallow clone — only the latest commit).
+          # We need full history for semantic versioning to work:
+          # the versioning script reads git tags to determine the current version.
+          # With shallow clone: no tags → version detection fails.
+          fetch-depth: 0
+
+      # ─────────────────────────────────────────────────────────────
+      # STEP: Set up Java
+      # actions/setup-java@v4 installs the specified JDK version on the runner.
+      # The runner image has some Java installed, but version varies.
+      # setup-java ensures EXACTLY Java 21 (matching pom.xml).
+      # ─────────────────────────────────────────────────────────────
+      - name: Set up Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          # java-version: which JDK version to install
+          java-version: ${{ env.JAVA_VERSION }}
+          # distribution: which JDK vendor to use.
+          # temurin = Eclipse Temurin (same as our Dockerfile base image).
+          # Consistency between build environment and runtime environment.
+          # Other options: zulu, corretto (Amazon), microsoft, liberica
+          distribution: 'temurin'
+          # cache: 'maven' tells setup-java to cache ~/.m2 between workflow runs.
+          # Maven downloads dependencies from Central on every run (slow).
+          # With caching: dependencies are restored from cache → saves 1-3 minutes per run.
+          # The cache key is based on the pom.xml hash:
+          #   same pom.xml → hit the cache
+          #   pom.xml changed → cache miss → re-download dependencies
+          cache: 'maven'
+
+      # ─────────────────────────────────────────────────────────────
+      # STEP: Run Maven build and tests
+      # 'run' executes a shell command directly on the runner.
+      # Unlike 'uses' (which runs a pre-packaged Action), 'run' is raw shell.
+      # ─────────────────────────────────────────────────────────────
+      - name: Build and run unit tests
+        run: |
+          # mvn verify executes ALL Maven lifecycle phases up to verify:
+          # validate → initialize → generate-sources → process-sources →
+          # generate-resources → process-resources → compile →
+          # process-classes → generate-test-sources → process-test-sources →
+          # generate-test-resources → process-test-resources → test-compile →
+          # process-test-classes → test → prepare-package → package → verify
+          #
+          # The verify phase runs integration tests (plugins bound to verify phase).
+          # For unit tests only, 'mvn test' is sufficient.
+          # We use 'verify' to also run any integration test plugins.
+          #
+          # -B = batch mode: no interactive prompts, no color codes (better for CI logs)
+          # -V = print Maven and Java version at start (helps debug build failures)
+          mvn verify -B -V
+
+      # ─────────────────────────────────────────────────────────────
+      # STEP: Upload test results as artifacts
+      # If tests fail, GitHub lets you download the Surefire XML reports.
+      # These reports can be imported into test dashboards.
+      # ─────────────────────────────────────────────────────────────
+      - name: Upload test results
+        # 'if' conditionally executes this step.
+        # always() = run this step even if previous steps failed.
+        # Without always(): if tests fail, this step is skipped and you lose the report.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          # Maven Surefire plugin writes XML test results to this directory
+          path: target/surefire-reports/
+          # retention-days: how long GitHub keeps the artifact.
+          # After 7 days, the report is automatically deleted.
+          retention-days: 7
+
+  # ┌─────────────────────────────────────────────────────────────────┐
+  # │ JOB 2: version                                                  │
+  # │ Calculates the next semantic version and creates a git tag      │
+  # │ Only runs on push to main or develop (not on PRs)              │
+  # └─────────────────────────────────────────────────────────────────┘
+  version:
+    name: Semantic Versioning
+    runs-on: ubuntu-latest
+
+    # needs: this job does NOT start until the 'test' job completes successfully.
+    # If tests fail, 'version' is skipped — we never version a broken build.
+    # This creates a dependency chain: test → version → build → deploy
+    needs: test
+
+    # if: controls when this job runs.
+    # github.event_name == 'push': only on direct pushes (not on PRs).
+    # On PRs, we run tests but do NOT create versions or deployments.
+    # This prevents version bumps on every developer's feature branch push.
+    if: github.event_name == 'push'
+
+    # outputs: values produced by this job that other jobs can consume.
+    # Jobs are isolated — they run on separate runners.
+    # The only way to pass data between jobs is via outputs.
+    outputs:
+      # new_version: the computed semantic version (e.g., "1.2.3")
+      new_version: ${{ steps.semver.outputs.new_version }}
+      # release_tag: the git tag (e.g., "v1.2.3")
+      release_tag: ${{ steps.semver.outputs.release_tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # token: PAT (Personal Access Token) stored as a GitHub Secret.
+          # The default GITHUB_TOKEN cannot push to protected branches.
+          # A PAT with 'repo' scope can bypass branch protection for tag creation.
+          # ${{ secrets.GITHUB_TOKEN }} is the auto-generated token for this run.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ─────────────────────────────────────────────────────────────
+      # STEP: Calculate next semantic version
+      # This is a custom shell script that reads git tags and computes
+      # the next version based on commit messages.
+      # ─────────────────────────────────────────────────────────────
+      - name: Calculate next semantic version
+        # id: gives this step a name so other steps can reference its outputs.
+        # ${{ steps.semver.outputs.new_version }} reads the output of THIS step.
+        id: semver
+        run: |
+          # ─────────────────────────────────────────────────────────
+          # SEMANTIC VERSIONING: MAJOR.MINOR.PATCH
+          #
+          # PATCH (0.0.X): Bug fixes — backward compatible changes
+          #   Example: Fix NPE in employee lookup
+          #   Commit message: "fix: null pointer when employee has no department"
+          #
+          # MINOR (0.X.0): New features — backward compatible additions
+          #   Example: Add new GET /employees/salary endpoint
+          #   Commit message: "feat: add salary filter endpoint"
+          #   Rule: PATCH resets to 0 when MINOR increments (1.2.9 → 1.3.0)
+          #
+          # MAJOR (X.0.0): Breaking changes — incompatible API changes
+          #   Example: Rename /employees to /staff (breaks all existing clients)
+          #   Commit message: "feat!: rename employees endpoint to staff" (! = breaking)
+          #   Or: commit body contains "BREAKING CHANGE:"
+          #   Rule: MINOR and PATCH reset to 0 when MAJOR increments (1.3.5 → 2.0.0)
+          #
+          # CONVENTIONAL COMMITS format:
+          #   <type>(<optional-scope>): <description>
+          #   fix: → PATCH bump
+          #   feat: → MINOR bump
+          #   feat!: or BREAKING CHANGE → MAJOR bump
+          #   chore:, docs:, style:, refactor:, test: → no version bump
+          # ─────────────────────────────────────────────────────────
+
+          # git describe --tags --abbrev=0
+          #   Find the most recent tag reachable from HEAD.
+          #   --tags: include lightweight tags (not just annotated tags)
+          #   --abbrev=0: don't append the commit hash suffix
+          #   If no tags exist yet (first run), this fails → use default "v0.0.0"
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "Latest tag: $LATEST_TAG"
+
+          # Strip the "v" prefix → "1.2.3"
+          # Parameter substitution: ${variable#pattern} removes the pattern from the START
+          CURRENT_VERSION=${LATEST_TAG#v}
+          echo "Current version: $CURRENT_VERSION"
+
+          # Split version into components using IFS (Internal Field Separator)
+          # IFS='.' means split on dots
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+          echo "Major: $MAJOR, Minor: $MINOR, Patch: $PATCH"
+
+          # Analyze commit messages since the last tag to determine bump type
+          # git log v1.2.3..HEAD --pretty=format:"%s"
+          #   Shows only the SUBJECT (first line) of each commit
+          #   Since the last tag up to current HEAD
+          COMMITS=$(git log "$LATEST_TAG..HEAD" --pretty=format:"%s%n%b" 2>/dev/null || echo "")
+          echo "Commits since last tag:"
+          echo "$COMMITS"
+
+          # Determine version bump type based on Conventional Commits
+          # Check for BREAKING CHANGE first (highest priority)
+          if echo "$COMMITS" | grep -qE "^BREAKING CHANGE:|!:"; then
+            echo "Breaking change detected → MAJOR bump"
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+          # Check for new features (feat: prefix) → MINOR bump
+          elif echo "$COMMITS" | grep -qE "^feat(\(.*\))?:"; then
+            echo "Feature detected → MINOR bump"
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          # Default: any other change (fix:, chore:, refactor:, etc.) → PATCH bump
+          else
+            echo "Fix/chore/other detected → PATCH bump"
+            PATCH=$((PATCH + 1))
+          fi
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          RELEASE_TAG="v${NEW_VERSION}"
+          echo "New version: $NEW_VERSION"
+          echo "Release tag: $RELEASE_TAG"
+
+          # GITHUB_OUTPUT is a special file that persists step outputs.
+          # Other steps and jobs read these values via ${{ steps.semver.outputs.new_version }}
+          # "key=value" format, one output per line
+          echo "new_version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "release_tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+
+      # ─────────────────────────────────────────────────────────────
+      # STEP: Update pom.xml version
+      # Maven's versions plugin updates the <version> in pom.xml.
+      # ─────────────────────────────────────────────────────────────
+      - name: Update pom.xml version
+        run: |
+          # mvn versions:set
+          #   -DnewVersion=1.2.3: the new version string
+          #   -DgenerateBackupPoms=false: don't create pom.xml.bak backup files
+          #                               (they would be committed accidentally)
+          # This updates the <version> element in pom.xml in-place.
+          mvn versions:set -DnewVersion=${{ steps.semver.outputs.new_version }} -DgenerateBackupPoms=false
+
+      # ─────────────────────────────────────────────────────────────
+      # STEP: Commit version changes and create git tag
+      # ─────────────────────────────────────────────────────────────
+      - name: Commit version bump and create tag
+        run: |
+          # Configure git identity for this automated commit.
+          # GitHub Actions runs as a bot — must set identity before committing.
+          # Without this: "Author identity unknown" — git commit fails.
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # git add pom.xml
+          # Stage only the pom.xml — do NOT use `git add .` (could accidentally
+          # stage build artifacts that slipped through .gitignore).
+          git add pom.xml
+
+          # git commit -m "[skip ci] bump version to 1.2.3"
+          # [skip ci] is a special keyword — GitHub Actions sees this in the commit
+          # message and SKIPS triggering a new workflow run.
+          # Without [skip ci]: the version bump commit triggers another pipeline run,
+          # which bumps the version again → infinite loop.
+          git commit -m "[skip ci] bump version to ${{ steps.semver.outputs.new_version }}"
+
+          # git push: push the version bump commit back to the branch
+          git push
+
+          # git tag -a v1.2.3 -m "Release v1.2.3"
+          #   -a: annotated tag (includes tagger, date, message; preferred over lightweight tags)
+          #   v1.2.3: the tag name
+          #   -m "...": the tag message (shows in `git tag -n`)
+          git tag -a "${{ steps.semver.outputs.release_tag }}" -m "Release ${{ steps.semver.outputs.release_tag }}"
+
+          # git push origin v1.2.3
+          # Tags are NOT pushed with regular `git push` — must be explicit.
+          git push origin "${{ steps.semver.outputs.release_tag }}"
+
+      # ─────────────────────────────────────────────────────────────
+      # STEP: Create GitHub Release
+      # Creates a Release entry in the GitHub UI with release notes.
+      # ─────────────────────────────────────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # tag_name: the git tag to create the release from
+          tag_name: ${{ steps.semver.outputs.release_tag }}
+          # name: the human-readable title of the release
+          name: Release ${{ steps.semver.outputs.release_tag }}
+          # body: the release notes in Markdown format
+          body: |
+            ## What's Changed
+            Automated release of version ${{ steps.semver.outputs.new_version }}
+
+            ### Docker Image
+            ```
+            docker pull ghcr.io/${{ env.IMAGE_NAME }}:${{ steps.semver.outputs.new_version }}
+            ```
+          # draft: false = publish immediately (not a draft)
+          draft: false
+          # prerelease: false = this is a stable release
+          # For develop branch, you might set prerelease: true
+          prerelease: ${{ github.ref_name != 'main' }}
+        env:
+          # GITHUB_TOKEN is automatically provided by GitHub Actions.
+          # It has permissions defined in the 'permissions' section above.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ┌─────────────────────────────────────────────────────────────────┐
+  # │ JOB 3: build-and-push                                          │
+  # │ Builds Docker image and pushes to GHCR                        │
+  # │ Only runs after version job succeeds                           │
+  # └─────────────────────────────────────────────────────────────────┘
+  build-and-push:
+    name: Docker Build and Push to GHCR
+    runs-on: ubuntu-latest
+    needs: [test, version]
+
+    # This job only runs on push events (not PRs)
+    if: github.event_name == 'push'
+
+    # outputs passes the image digest to the deploy job.
+    # The digest (sha256:abc...) is the immutable identifier for an exact image version.
+    # Using digest instead of tag prevents "latest" ambiguity.
+    outputs:
+      image_digest: ${{ steps.docker_push.outputs.digest }}
+      image_tag: ${{ needs.version.outputs.new_version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Pull the latest version of the branch — AFTER the version job
+          # committed the pom.xml update. Without this, we'd build from the
+          # pre-version-bump commit (old pom.xml version number).
+          ref: ${{ github.ref }}
+
+      # ─────────────────────────────────────────────────────────────
+      # STEP: Set up Docker Buildx
+      # Buildx is Docker's extended build system supporting:
+      #   - Multi-platform builds (linux/amd64, linux/arm64)
+      #   - Build cache backends (inline, registry, GitHub Actions cache)
+      #   - BuildKit features (parallel stages, secret mounts)
+      # Standard `docker build` cannot do multi-platform builds.
+      # ─────────────────────────────────────────────────────────────
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ─────────────────────────────────────────────────────────────
+      # STEP: Authenticate to GitHub Container Registry (GHCR)
+      #
+      # GHCR explanation:
+      #   GitHub Container Registry (ghcr.io) is GitHub's built-in Docker registry.
+      #   Your images live at: ghcr.io/<owner>/<image-name>:<tag>
+      #
+      #   WHY GHCR over Docker Hub?
+      #   - Free for public and private images (Docker Hub limits rate/pulls)
+      #   - Integrated with GitHub permissions (access controlled by repo permissions)
+      #   - No separate account needed
+      #   - Images are linked to the GitHub repository automatically
+      #
+      # Authentication:
+      #   registry: ghcr.io — which registry to authenticate to
+      #   username: ${{ github.actor }} — the GitHub user/bot running this workflow
+      #   password: ${{ secrets.GITHUB_TOKEN }} — auto-generated token with 'packages: write'
+      #
+      # secrets.GITHUB_TOKEN:
+      #   GitHub automatically creates this token for every workflow run.
+      #   It expires when the workflow finishes.
+      #   No setup required — it's automatic.
+      #   Scope is limited to this repository.
+      # ─────────────────────────────────────────────────────────────
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ─────────────────────────────────────────────────────────────
+      # STEP: Extract Docker metadata
+      # docker/metadata-action automatically generates tags and labels
+      # from git information. This is the recommended pattern.
+      # ─────────────────────────────────────────────────────────────
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # images: the base image name (without tags)
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # tags: defines which tags to apply to the image.
+          # type=raw: apply a literal tag value
+          # type=sha: apply the git commit SHA as a tag (for exact traceability)
+          tags: |
+            type=raw,value=${{ needs.version.outputs.new_version }}
+            type=raw,value=latest,enable=${{ github.ref_name == 'main' }}
+            type=raw,value=${{ github.ref_name }}-latest
+            type=sha,prefix=sha-
+
+      # ─────────────────────────────────────────────────────────────
+      # STEP: Build and push Docker image
+      #
+      # IMAGE TAGS EXPLAINED:
+      #   ghcr.io/company/employee-service:1.2.3       → exact semantic version
+      #   ghcr.io/company/employee-service:latest      → latest stable (main branch only)
+      #   ghcr.io/company/employee-service:main-latest → latest from main branch
+      #   ghcr.io/company/employee-service:sha-abc1234 → exact commit (for rollback)
+      #
+      # Why multiple tags?
+      #   :latest     → Kubernetes development clusters pull the latest build
+      #   :1.2.3      → Kubernetes production pins to exact version (immutable)
+      #   :sha-...    → Emergency rollback: pin to exact commit that was working
+      # ─────────────────────────────────────────────────────────────
+      - name: Build and push Docker image
+        id: docker_push
+        uses: docker/build-push-action@v5
+        with:
+          # context: which directory to use as the Docker build context.
+          # '.' = current directory (the repository root).
+          # The build context is the set of files Docker can access during build.
+          context: .
+          # file: path to the Dockerfile
+          file: ./Dockerfile
+          # push: true = actually push to the registry.
+          # push: false would only build locally (useful for PR validation without pushing).
+          push: true
+          # tags: all the tags computed by metadata-action in the previous step
+          tags: ${{ steps.meta.outputs.tags }}
+          # labels: OCI image labels (metadata embedded in the image).
+          # These appear in `docker inspect` output and GHCR UI.
+          labels: ${{ steps.meta.outputs.labels }}
+          # platforms: build for multiple CPU architectures.
+          # linux/amd64 = standard x86_64 servers and most cloud VMs
+          # linux/arm64 = AWS Graviton, Apple Silicon (M1/M2), Raspberry Pi
+          # Building multi-arch ensures the image runs on any Kubernetes node type.
+          platforms: linux/amd64,linux/arm64
+          # cache-from, cache-to: use GitHub Actions cache to speed up Docker builds.
+          # Docker layers from previous builds are cached between runs.
+          # mode=max: cache all layers including intermediate build stages.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # provenance: generate SLSA (Supply chain Levels for Software Artifacts) provenance.
+          # This cryptographically proves WHERE and HOW the image was built.
+          # Required for SLSA Level 2+ compliance (supply chain security).
+          provenance: true
+          # sbom: generate Software Bill of Materials (SBOM) — a list of every
+          # dependency, library, and OS package in the image.
+          # Required for vulnerability scanning and compliance.
+          sbom: true
+
+  # ┌─────────────────────────────────────────────────────────────────┐
+  # │ JOB 4: update-gitops                                           │
+  # │ Updates image tag in the GitOps repository                    │
+  # │ Triggers Argo CD to deploy the new version                    │
+  # └─────────────────────────────────────────────────────────────────┘
+  update-gitops:
+    name: Update GitOps Repository
+    runs-on: ubuntu-latest
+    needs: [version, build-and-push]
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Checkout GitOps repository
+        uses: actions/checkout@v4
+        with:
+          # repository: checkout a DIFFERENT repository (not the current one)
+          repository: ${{ env.GITOPS_REPO }}
+          # token: PAT (Personal Access Token) stored as a GitHub Secret.
+          # GITOPS_PAT must be created manually:
+          #   GitHub Settings → Developer settings → Personal access tokens
+          #   Scopes needed: repo (full access to the gitops repo)
+          # The default GITHUB_TOKEN only has access to the CURRENT repository.
+          # To push to a DIFFERENT repository, you need a PAT.
+          token: ${{ secrets.GITOPS_PAT }}
+
+      # ─────────────────────────────────────────────────────────────
+      # STEP: Update image tag in Helm values.yaml
+      # This is the "GitOps update" step — the bridge between CI and CD.
+      #
+      # HOW GITOPS UPDATE WORKS:
+      #   1. values.yaml currently has: tag: 1.2.2
+      #   2. We built image: 1.2.3
+      #   3. sed replaces "tag: 1.2.2" with "tag: 1.2.3" in values.yaml
+      #   4. We commit and push the change to employee-gitops
+      #   5. Argo CD detects the git change → deploys image 1.2.3
+      #
+      # WHY UPDATE GIT INSTEAD OF CALLING KUBECTL DIRECTLY?
+      #   GitOps principle: Git is the SINGLE SOURCE OF TRUTH.
+      #   All changes to the cluster happen by modifying Git.
+      #   This provides: audit trail, rollback, peer review, disaster recovery.
+      # ─────────────────────────────────────────────────────────────
+      - name: Update image tag in Helm values
+        run: |
+          NEW_VERSION="${{ needs.version.outputs.new_version }}"
+          echo "Updating image tag to: $NEW_VERSION"
+
+          # sed -i 's/pattern/replacement/' file
+          # -i: in-place (modify the file directly)
+          # The pattern matches the tag line in values.yaml:
+          #   tag: "1.2.2"   →   tag: "1.2.3"
+          #
+          # \([0-9]*\.[0-9]*\.[0-9]*\) matches the current semantic version
+          # in POSIX BRE (Basic Regular Expression) syntax.
+          sed -i "s/tag: \"[0-9]*\.[0-9]*\.[0-9]*\"/tag: \"${NEW_VERSION}\"/" helm/values.yaml
+
+          # Also update the plain k8s manifests (if used instead of Helm)
+          sed -i "s|ghcr.io/.*/employee-service:.*|ghcr.io/${{ env.IMAGE_NAME }}:${NEW_VERSION}|g" k8s/deployment.yaml
+
+          echo "Updated files:"
+          grep -n "tag:" helm/values.yaml
+          grep -n "image:" k8s/deployment.yaml
+
+      # ─────────────────────────────────────────────────────────────
+      # STEP: Commit and push changes to GitOps repository
+      # ─────────────────────────────────────────────────────────────
+      - name: Commit and push GitOps changes
+        run: |
+          # Configure git identity for the automated commit
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # git diff --quiet: returns exit code 0 if no changes, 1 if changes.
+          # We only commit if something actually changed.
+          # Without this check: empty commits clutter the GitOps git history.
+          git diff --quiet && echo "No changes to commit" && exit 0
+
+          # Stage the modified files
+          git add helm/values.yaml k8s/deployment.yaml
+
+          # Commit with a descriptive message including:
+          # - What changed (deploy)
+          # - New version
+          # - Source commit SHA (for traceability)
+          git commit -m "deploy: update employee-service to ${{ needs.version.outputs.new_version }}
+
+          Triggered by: ${{ github.repository }}@${{ github.sha }}
+          Workflow: ${{ github.workflow }}
+          Branch: ${{ github.ref_name }}"
+
+          # git push: push changes to the GitOps repository
+          # This is the action that triggers Argo CD (it monitors this repo).
+          git push
+
+          echo "GitOps repository updated. Argo CD will detect and deploy the change."

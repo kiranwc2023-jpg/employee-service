@@ -1,0 +1,231 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         PARENT — Spring Boot Bill of Materials (BOM)
+         This is the single most important declaration in the file.
+         It inherits default plugin configurations, dependency versions,
+         and build settings from the Spring Boot parent POM.
+         Without this, you must manually specify every dependency version.
+         ═══════════════════════════════════════════════════════════ -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.2.3</version>
+        <relativePath/>
+    </parent>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         PROJECT COORDINATES — the "address" of this artifact
+         in the Maven Central repository ecosystem.
+         groupId    : reverse-domain naming convention for your org
+         artifactId : the name of the JAR file produced
+         version    : Semantic Version — MAJOR.MINOR.PATCH
+         packaging  : jar = executable JAR; war = web archive
+         ═══════════════════════════════════════════════════════════ -->
+    <groupId>com.company</groupId>
+    <artifactId>employee-service</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>employee-service</name>
+    <description>Enterprise Employee Microservice - GitOps Demo</description>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         PROPERTIES — global variables reused throughout this file.
+         Centralizing versions here means you change one line
+         instead of hunting through dozens of dependency entries.
+         ═══════════════════════════════════════════════════════════ -->
+    <properties>
+        <java.version>21</java.version>
+        <spring-cloud.version>2023.0.0</spring-cloud.version>
+        <mapstruct.version>1.5.5.Final</mapstruct.version>
+        <testcontainers.version>1.19.6</testcontainers.version>
+        <!-- Ensures source files are compiled and read as UTF-8.
+             Without this, special characters may cause build failures
+             on some operating systems. -->
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    </properties>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         DEPENDENCIES — libraries your application needs at runtime,
+         test time, or compile time.
+         Each <dependency> block pulls a JAR from Maven Central.
+         ═══════════════════════════════════════════════════════════ -->
+    <dependencies>
+
+        <!-- ─────────────────────────────────────────────────────
+             spring-boot-starter-web
+             Pulls in: Spring MVC, Tomcat (embedded server),
+             Jackson (JSON serialization), Hibernate Validator.
+             This is why you can write @RestController and have
+             a running HTTP server with zero XML configuration.
+             Remove this → your app has no HTTP server.
+             ───────────────────────────────────────────────────── -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- ─────────────────────────────────────────────────────
+             spring-boot-starter-data-jpa
+             Pulls in: Hibernate ORM, Spring Data repositories,
+             JDBC connection pool (HikariCP), transaction management.
+             This is why @Repository and JpaRepository work.
+             Remove this → you cannot talk to any database.
+             ───────────────────────────────────────────────────── -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+        <!-- ─────────────────────────────────────────────────────
+             spring-boot-starter-actuator
+             Exposes /actuator/health, /actuator/info, /actuator/metrics.
+             This is production-critical — Kubernetes uses /actuator/health
+             as the liveness and readiness probe endpoint.
+             Remove this → Kubernetes cannot determine if your pod is alive.
+             ───────────────────────────────────────────────────── -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- ─────────────────────────────────────────────────────
+             spring-boot-starter-validation
+             Pulls in Hibernate Validator (JSR-380/Bean Validation).
+             Enables @NotNull, @NotBlank, @Email, @Size on model fields.
+             Remove this → input validation annotations are ignored.
+             ───────────────────────────────────────────────────── -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!-- ─────────────────────────────────────────────────────
+             h2 — in-memory relational database
+             scope=runtime means it is only on the classpath at runtime,
+             not compile time. H2 is used for development and tests.
+             In production, you would swap this for PostgreSQL/MySQL.
+             Remove this → JPA has no database to connect to (startup fails).
+             ───────────────────────────────────────────────────── -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- ─────────────────────────────────────────────────────
+             lombok — code generation at compile time.
+             Generates getters, setters, constructors, toString, equals
+             through annotations like @Data, @Builder, @NoArgsConstructor.
+             scope=provided: Lombok is only needed during compilation,
+             not packaged into the final JAR.
+             Remove this → you must write all boilerplate manually.
+             ───────────────────────────────────────────────────── -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- ─────────────────────────────────────────────────────
+             spring-boot-starter-test
+             Pulls in: JUnit 5, Mockito, AssertJ, Spring Test utilities,
+             MockMvc for HTTP layer testing.
+             scope=test means this JAR is not included in the production JAR.
+             Remove this → you cannot write any unit or integration tests.
+             ───────────────────────────────────────────────────── -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         BUILD — configures Maven plugins that execute during the build.
+         ═══════════════════════════════════════════════════════════ -->
+    <build>
+        <plugins>
+
+            <!-- ─────────────────────────────────────────────────
+                 spring-boot-maven-plugin
+                 This plugin repackages the standard JAR into a
+                 "fat JAR" (also called uber JAR or executable JAR).
+                 A fat JAR contains ALL dependencies embedded inside it.
+                 This is why `java -jar employee-service.jar` works —
+                 no separate classpath is needed.
+                 Remove this → your JAR is missing all Spring libraries
+                 and `java -jar` fails with ClassNotFoundException.
+                 ───────────────────────────────────────────────── -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- Excludes Lombok from the fat JAR because Lombok
+                         is only a compile-time annotation processor.
+                         At runtime, the generated code is already in your
+                         class files — Lombok itself is not needed. -->
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+
+            <!-- ─────────────────────────────────────────────────
+                 maven-compiler-plugin
+                 Configures which Java version to compile source code with.
+                 Java 21 includes Virtual Threads, Records, Sealed Classes,
+                 Pattern Matching — modern enterprise features.
+                 Without this, Maven defaults to Java 8 compatibility.
+                 ───────────────────────────────────────────────── -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <source>${java.version}</source>
+                    <target>${java.version}</target>
+                    <!-- annotationProcessorPaths tells the compiler to run
+                         Lombok's annotation processor before compiling.
+                         This is how @Data generates getters/setters BEFORE
+                         the rest of the code that uses those getters compiles. -->
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+
+            <!-- ─────────────────────────────────────────────────
+                 maven-surefire-plugin
+                 Controls how JUnit tests are executed during `mvn test`.
+                 useModulePath=false is required for Spring Boot tests
+                 with the Java Module System (JPMS) to work correctly.
+                 Without this, some test runners have classpath issues.
+                 ───────────────────────────────────────────────── -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <useModulePath>false</useModulePath>
+                </configuration>
+            </plugin>
+
+        </plugins>
+    </build>
+
+</project>
