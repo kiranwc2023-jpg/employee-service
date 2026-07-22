@@ -84,3 +84,5 @@ docker run -p 8080:8080 employee-service:latest
 | `SPRING_DATASOURCE_USERNAME` | DB username |
 | `SPRING_DATASOURCE_PASSWORD` | DB password (from Secret) |
 | `APP_VERSION` | Application version |
+
+<!-- Pipeline trigger: 2026-07-22 03:24:03 -->
