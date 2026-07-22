@@ -65,7 +65,7 @@ on:
       force_deploy:
         description: 'Force deployment even if tests fail'
         required: false
-        default: 'false'
+        default: false
         type: boolean
 
 # ───────────────────────────────────────────────────────────────────────
@@ -91,7 +91,7 @@ env:
 
   # GITOPS_REPO: the separate repository holding Kubernetes deployment manifests.
   # This is the "GitOps repository" — the source of truth for what runs in K8s.
-  GITOPS_REPO: 'mycompany/employee-gitops'
+  GITOPS_REPO: 'kiranwc2023-jpg/employee-gitops'
 
 # ───────────────────────────────────────────────────────────────────────
 # PERMISSIONS: What the GitHub Actions token can do.
