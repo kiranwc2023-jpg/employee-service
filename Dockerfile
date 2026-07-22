@@ -38,10 +38,11 @@
 #     alpine    = based on Alpine Linux (~5MB base OS; minimal attack surface)
 #   AS builder: names this stage "builder" so stage 2 can reference it.
 #
-#   WHY eclipse-temurin and not openjdk?
-#   The "openjdk" Docker Hub image is deprecated. eclipse-temurin is the
-#   official successor maintained by the Eclipse Foundation — production-safe.
-FROM eclipse-temurin:21-jdk-alpine AS builder
+#   WHY maven:3.9-eclipse-temurin-21-alpine?
+#   The eclipse-temurin:21-jdk-alpine image includes only the JDK — not Maven.
+#   The official maven image bundles both Maven 3.9 and Java 21 on Alpine.
+#   This ensures `mvn` is on PATH inside the Docker build context.
+FROM maven:3.9-eclipse-temurin-21-alpine AS builder
 
 # WORKDIR /app
 #   Sets the working directory INSIDE the container for all subsequent commands.
