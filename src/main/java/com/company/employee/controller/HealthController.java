@@ -50,7 +50,7 @@ public class HealthController {
     @GetMapping("/hello")
     public ResponseEntity<Map<String, String>> hello() {
         return ResponseEntity.ok(Map.of(
-            "message", "Hello from " + appName + "!",
+            "message", "Hello from Kiran" + appName + "!",
             "version", appVersion,
             // Instant.now().toString() produces ISO-8601 timestamp: 2025-01-15T10:30:00Z
             "timestamp", Instant.now().toString()
